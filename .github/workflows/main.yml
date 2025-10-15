@@ -1,0 +1,92 @@
+name: Publication Article Bi-hebdomadaire
+
+on:
+  schedule:
+    # Exécution 2 fois par semaine : mardi et vendredi à 7h00 UTC (8h00 heure de Paris en hiver)
+    - cron: '0 10 * * 2'  # Mardi
+    - cron: '0 10 * * 5'  # Vendredi
+  
+  # Permet aussi de lancer manuellement depuis l'interface GitHub
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publier-article:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+      
+      - name: Installer Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Installer les dépendances
+        run: |
+          pip install anthropic openai requests python-dotenv
+      
+      - name: Créer le fichier .env
+        env:
+          ENV: ${{ secrets.ENV }}
+        run: |
+          echo "$ENV" > .env
+      
+      - name: Vérification des fichiers nécessaires
+        run: |
+          if [ ! -f "sujets.csv" ]; then
+            echo "❌ ERREUR: Le fichier sujets.csv est manquant"
+            exit 1
+          fi
+          if [ ! -f "config_articles.txt" ]; then
+            echo "❌ ERREUR: Le fichier config_articles.txt est manquant"
+            exit 1
+          fi
+          echo "✅ Tous les fichiers nécessaires sont présents"
+      
+      - name: Lancer le script
+        run: python blog_generator_script.py
+      
+      - name: Commit et push des modifications
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions Bot"
+          
+          # Pull les derniers changements
+          git pull --rebase origin main || true
+          
+          # Ajouter les fichiers modifiés
+          git add sujets.csv
+          if [ -f "sujets_traites.csv" ]; then
+            git add sujets_traites.csv
+          fi
+          
+          # Vérifier s'il y a des changements
+          if ! git diff --staged --quiet; then
+            git commit -m "🤖 Article publié automatiquement - $(date +'%Y-%m-%d %H:%M')"
+            
+            # Réessayer le push jusqu'à 5 fois
+            for i in {1..5}; do
+              if git push; then
+                echo "✅ Modifications sauvegardées"
+                break
+              else
+                echo "⚠️ Push échoué, tentative $i/5"
+                git pull --rebase origin main
+                sleep 3
+              fi
+            done
+          else
+            echo "Aucun changement à commiter"
+          fi
+        continue-on-error: true
+      
+      - name: Nettoyage du fichier .env
+        if: always()
+        run: rm -f .env
